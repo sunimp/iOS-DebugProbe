@@ -18,8 +18,6 @@ public final class DebugProbe {
     public struct Configuration {
         public let hubURL: URL
         public let token: String
-        public var enableNetworkCapture: Bool = true
-        public var enableLogCapture: Bool = true
         public var maxBufferSize: Int = 10000
 
         /// 网络捕获模式
@@ -54,6 +52,9 @@ public final class DebugProbe {
             self.token = token
         }
     }
+    
+    // MARK: - Versions
+    public static var version: String { "1.4.0" }
 
     // MARK: - Notifications
 
@@ -130,12 +131,10 @@ public final class DebugProbe {
     /// - Parameters:
     ///   - networkCaptureMode: 网络捕获模式，默认 `.automatic`
     ///   - networkCaptureScope: 网络捕获范围，默认 `.all`
-    ///   - enableLogCapture: 是否启用日志捕获，默认 `true`
     ///   - enablePersistence: 是否启用持久化，默认 `true`
     public func start(
         networkCaptureMode: NetworkCaptureMode = .automatic,
         networkCaptureScope: NetworkCaptureScope = .all,
-        enableLogCapture: Bool = true,
         enablePersistence: Bool = true
     ) {
         let settings = DebugProbeSettings.shared
@@ -152,7 +151,6 @@ public final class DebugProbe {
         )
         config.networkCaptureMode = networkCaptureMode
         config.networkCaptureScope = networkCaptureScope
-        config.enableLogCapture = enableLogCapture
         config.enablePersistence = enablePersistence
 
         start(configuration: config)
@@ -517,6 +515,7 @@ public extension DebugProbe {
         try? pluginManager.register(plugin: LogPlugin())
         try? pluginManager.register(plugin: DatabasePlugin())
         try? pluginManager.register(plugin: WebSocketPlugin())
+        try? pluginManager.register(plugin: PerformancePlugin())
 
         // 注册调试工具插件
         try? pluginManager.register(plugin: MockPlugin())
@@ -538,14 +537,7 @@ public extension DebugProbe {
             do {
                 // 启动插件系统
                 try await pluginManager.startAll(deviceInfo: deviceInfo)
-
-                // 根据配置启用/禁用插件
-                if !configuration.enableNetworkCapture {
-                    await pluginManager.setPluginEnabled(BuiltinPluginId.network, enabled: false)
-                }
-                if !configuration.enableLogCapture {
-                    await pluginManager.setPluginEnabled(BuiltinPluginId.log, enabled: false)
-                }
+                // 各插件的启用/禁用由插件自身管理
             } catch {
                 DebugLog.error("[Plugin] Failed to start plugin system: \(error)")
             }

@@ -527,6 +527,8 @@ public final class DebugBridgeClient: NSObject {
                 DebugLog.debug(.bridge, "Event queued: WebSocket \(wsEvent) (buffer: \(eventBuffer.count))")
             case .stats:
                 DebugLog.debug(.bridge, "Event queued: Stats (buffer: \(eventBuffer.count))")
+            case let .performance(perfEvent):
+                DebugLog.debug(.bridge, "Event queued: Performance \(perfEvent.eventType.rawValue) (buffer: \(eventBuffer.count))")
             }
         }
     }

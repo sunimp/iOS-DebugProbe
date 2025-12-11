@@ -15,6 +15,7 @@ public enum DebugEvent: Codable {
     case webSocket(WSEvent)
     case log(LogEvent)
     case stats(StatsEvent)
+    case performance(PerformanceEvent)
 
     public var timestamp: Date {
         switch self {
@@ -25,6 +26,8 @@ public enum DebugEvent: Codable {
         case let .log(event):
             event.timestamp
         case let .stats(event):
+            event.timestamp
+        case let .performance(event):
             event.timestamp
         }
     }
@@ -38,6 +41,8 @@ public enum DebugEvent: Codable {
         case let .log(event):
             event.id
         case let .stats(event):
+            event.id
+        case let .performance(event):
             event.id
         }
     }
@@ -404,5 +409,169 @@ public struct StatsEvent: Codable {
         self.logCount = logCount
         self.memoryUsage = memoryUsage
         self.cpuUsage = cpuUsage
+    }
+}
+
+// MARK: - 性能事件
+
+/// 性能监控事件
+public struct PerformanceEvent: Codable, Sendable {
+    /// 事件唯一 ID
+    public let id: String
+    /// 事件类型
+    public let eventType: PerformanceEventType
+    /// 时间戳
+    public let timestamp: Date
+    /// 性能指标批次（仅当 eventType == .metrics 时有值）
+    public let metrics: [PerformanceMetricsData]?
+    /// 卡顿事件（仅当 eventType == .jank 时有值）
+    public let jank: JankEventData?
+    /// 告警事件（仅当 eventType == .alert 时有值）
+    public let alert: AlertData?
+
+    public init(
+        id: String = UUID().uuidString,
+        eventType: PerformanceEventType,
+        timestamp: Date = Date(),
+        metrics: [PerformanceMetricsData]? = nil,
+        jank: JankEventData? = nil,
+        alert: AlertData? = nil
+    ) {
+        self.id = id
+        self.eventType = eventType
+        self.timestamp = timestamp
+        self.metrics = metrics
+        self.jank = jank
+        self.alert = alert
+    }
+}
+
+/// 性能事件类型
+public enum PerformanceEventType: String, Codable, Sendable {
+    case metrics
+    case jank
+    case alert
+    case alertResolved
+}
+
+/// 性能指标数据（用于事件传输）
+public struct PerformanceMetricsData: Codable, Sendable {
+    public let timestamp: Date
+    public let cpu: CPUMetricsData?
+    public let memory: MemoryMetricsData?
+    public let fps: FPSMetricsData?
+
+    public init(
+        timestamp: Date = Date(),
+        cpu: CPUMetricsData? = nil,
+        memory: MemoryMetricsData? = nil,
+        fps: FPSMetricsData? = nil
+    ) {
+        self.timestamp = timestamp
+        self.cpu = cpu
+        self.memory = memory
+        self.fps = fps
+    }
+}
+
+/// CPU 指标数据
+public struct CPUMetricsData: Codable, Sendable {
+    public let usage: Double
+    public let userTime: Double
+    public let systemTime: Double
+    public let threadCount: Int
+
+    public init(usage: Double, userTime: Double, systemTime: Double, threadCount: Int) {
+        self.usage = usage
+        self.userTime = userTime
+        self.systemTime = systemTime
+        self.threadCount = threadCount
+    }
+}
+
+/// 内存指标数据
+public struct MemoryMetricsData: Codable, Sendable {
+    public let usedMemory: UInt64
+    public let peakMemory: UInt64
+    public let freeMemory: UInt64
+    public let memoryPressure: String
+    public let footprintRatio: Double
+
+    public init(usedMemory: UInt64, peakMemory: UInt64, freeMemory: UInt64, memoryPressure: String, footprintRatio: Double) {
+        self.usedMemory = usedMemory
+        self.peakMemory = peakMemory
+        self.freeMemory = freeMemory
+        self.memoryPressure = memoryPressure
+        self.footprintRatio = footprintRatio
+    }
+}
+
+/// FPS 指标数据
+public struct FPSMetricsData: Codable, Sendable {
+    public let fps: Double
+    public let droppedFrames: Int
+    public let jankCount: Int
+    public let averageRenderTime: Double
+
+    public init(fps: Double, droppedFrames: Int, jankCount: Int, averageRenderTime: Double) {
+        self.fps = fps
+        self.droppedFrames = droppedFrames
+        self.jankCount = jankCount
+        self.averageRenderTime = averageRenderTime
+    }
+}
+
+/// 卡顿事件数据
+public struct JankEventData: Codable, Sendable {
+    public let id: String
+    public let timestamp: Date
+    public let duration: Double
+    public let droppedFrames: Int
+    public let stackTrace: String?
+
+    public init(id: String = UUID().uuidString, timestamp: Date = Date(), duration: Double, droppedFrames: Int, stackTrace: String? = nil) {
+        self.id = id
+        self.timestamp = timestamp
+        self.duration = duration
+        self.droppedFrames = droppedFrames
+        self.stackTrace = stackTrace
+    }
+}
+
+/// 告警数据
+public struct AlertData: Codable, Sendable {
+    public let id: String
+    public let ruleId: String
+    public let metricType: String
+    public let severity: String
+    public let message: String
+    public let currentValue: Double
+    public let threshold: Double
+    public let timestamp: Date
+    public let isResolved: Bool
+    public let resolvedAt: Date?
+
+    public init(
+        id: String = UUID().uuidString,
+        ruleId: String,
+        metricType: String,
+        severity: String,
+        message: String,
+        currentValue: Double,
+        threshold: Double,
+        timestamp: Date = Date(),
+        isResolved: Bool = false,
+        resolvedAt: Date? = nil
+    ) {
+        self.id = id
+        self.ruleId = ruleId
+        self.metricType = metricType
+        self.severity = severity
+        self.message = message
+        self.currentValue = currentValue
+        self.threshold = threshold
+        self.timestamp = timestamp
+        self.isResolved = isResolved
+        self.resolvedAt = resolvedAt
     }
 }

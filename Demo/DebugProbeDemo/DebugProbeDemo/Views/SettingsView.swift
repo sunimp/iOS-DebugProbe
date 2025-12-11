@@ -21,7 +21,7 @@ struct SettingsView: View {
     
     var body: some View {
         List {
-            // 连接状态
+            // MARK: - 1. DebugProbe 状态
             Section {
                 HStack {
                     Text("状态")
@@ -49,42 +49,7 @@ struct SettingsView: View {
                 Text("DebugProbe 状态")
             }
             
-            // 配置
-            Section {
-                HStack {
-                    Text("主机地址")
-                    Spacer()
-                    TextField("127.0.0.1", text: $hubHost)
-                        .multilineTextAlignment(.trailing)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .keyboardType(.URL)
-                }
-                
-                HStack {
-                    Text("端口")
-                    Spacer()
-                    TextField("8081", text: $hubPort)
-                        .multilineTextAlignment(.trailing)
-                        .keyboardType(.numberPad)
-                        .frame(width: 80)
-                }
-                
-                HStack {
-                    Text("Token")
-                    Spacer()
-                    TextField("debug-token", text: $token)
-                        .multilineTextAlignment(.trailing)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                }
-            } header: {
-                Text("连接配置")
-            } footer: {
-                Text("修改配置后点击「应用配置」生效")
-            }
-            
-            // 开关
+            // MARK: - 2. 功能开关
             Section {
                 Toggle("启用 DebugProbe", isOn: $isEnabled)
                     .onChange(of: isEnabled) { newValue in
@@ -99,44 +64,42 @@ struct SettingsView: View {
                 Text("功能开关")
             }
             
-            // 设备信息
+            // MARK: - 3. 连接配置
             Section {
                 HStack {
-                    Text("设备名称")
+                    Text("主机地址")
                     Spacer()
-                    Text(UIDevice.current.name)
-                        .foregroundStyle(.secondary)
+                    TextField(DebugProbeSettings.defaultHost, text: $hubHost)
+                        .multilineTextAlignment(.trailing)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .keyboardType(.URL)
                 }
                 
                 HStack {
-                    Text("系统版本")
+                    Text("端口")
                     Spacer()
-                    Text("\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
-                        .foregroundStyle(.secondary)
+                    TextField(String(DebugProbeSettings.defaultPort), text: $hubPort)
+                        .multilineTextAlignment(.trailing)
+                        .keyboardType(.numberPad)
+                        .frame(width: 80)
                 }
                 
                 HStack {
-                    Text("App 版本")
+                    Text("Token")
                     Spacer()
-                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                        .foregroundStyle(.secondary)
+                    TextField(DebugProbeSettings.defaultToken, text: $token)
+                        .multilineTextAlignment(.trailing)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
                 }
             } header: {
-                Text("设备信息")
+                Text("连接配置")
+            } footer: {
+                Text("修改配置后点击「应用配置」生效")
             }
             
-            // 功能状态
-            Section {
-                FeatureRow(name: "HTTP 捕获", enabled: true)
-                FeatureRow(name: "WebSocket 捕获", enabled: true)
-                FeatureRow(name: "日志捕获", enabled: settings.isEnabled)
-                FeatureRow(name: "数据库检查", enabled: true)
-                FeatureRow(name: "Mock 引擎", enabled: true)
-            } header: {
-                Text("功能模块")
-            }
-            
-            // 操作
+            // MARK: - 4. 操作
             Section {
                 Button {
                     applyConfiguration()
@@ -171,12 +134,50 @@ struct SettingsView: View {
                 Text("操作")
             }
             
-            // 关于
+            // MARK: - 5. 功能模块
+            Section {
+                ForEach(pluginInfos, id: \.pluginId) { pluginInfo in
+                    FeatureRow(
+                        name: pluginInfo.displayName,
+                        enabled: pluginInfo.isEnabled
+                    )
+                }
+            } header: {
+                Text("功能模块")
+            }
+            
+            // MARK: - 6. 设备信息
+            Section {
+                HStack {
+                    Text("设备名称")
+                    Spacer()
+                    Text(deviceInfo.deviceName)
+                        .foregroundStyle(.secondary)
+                }
+                
+                HStack {
+                    Text("系统版本")
+                    Spacer()
+                    Text("\(deviceInfo.platform) \(deviceInfo.systemVersion)")
+                        .foregroundStyle(.secondary)
+                }
+                
+                HStack {
+                    Text("App 版本")
+                    Spacer()
+                    Text(deviceInfo.appVersion)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("设备信息")
+            }
+            
+            // MARK: - 7. 关于
             Section {
                 HStack {
                     Text("DebugProbe 版本")
                     Spacer()
-                    Text("1.4.0")
+                    Text(DebugProbe.version)
                         .foregroundStyle(.secondary)
                 }
                 
@@ -216,6 +217,18 @@ struct SettingsView: View {
         }
     }
     
+    // MARK: - Private Computed Properties
+    
+    /// 从 DebugProbe 获取设备信息
+    private var deviceInfo: DeviceInfo {
+        DeviceInfoProvider.current()
+    }
+    
+    /// 从 PluginManager 获取所有插件信息
+    private var pluginInfos: [PluginInfo] {
+        DebugProbe.shared.pluginManager.getAllPluginInfos()
+    }
+    
     // MARK: - Private Methods
     
     private func statusColor(for status: DebugProbeSettings.ConnectionStatusDetail) -> Color {
@@ -238,7 +251,7 @@ struct SettingsView: View {
     }
     
     private func applyConfiguration() {
-        let port = Int(hubPort) ?? 8081
+        let port = Int(hubPort) ?? DebugProbeSettings.defaultPort
         settings.configure(host: hubHost, port: port, token: token)
         
         // configure() 会发出通知，如果监听了通知会自动重连
@@ -247,7 +260,7 @@ struct SettingsView: View {
     }
     
     private func reconnect() {
-        // 使用新的无参数 reconnect() 方法
+        // 使用无参数 reconnect() 方法
         // 自动从 DebugProbeSettings 读取配置，处理启动/停止/重连逻辑
         DebugProbe.shared.reconnect()
     }

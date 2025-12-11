@@ -185,6 +185,7 @@ public final class EventPersistenceQueue {
             case .webSocket: "websocket"
             case .log: "log"
             case .stats: "stats"
+            case .performance: "performance"
             }
 
             // 插入数据库

@@ -23,6 +23,7 @@ public enum BuiltinPlugins {
             MockPlugin(),
             BreakpointPlugin(),
             ChaosPlugin(),
+            PerformancePlugin(),
         ]
     }
 
@@ -51,6 +52,8 @@ public enum BuiltinPlugins {
             BreakpointPlugin()
         case BuiltinPluginId.chaos:
             ChaosPlugin()
+        case BuiltinPluginId.performance:
+            PerformancePlugin()
         default:
             nil
         }

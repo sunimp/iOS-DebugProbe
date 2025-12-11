@@ -79,14 +79,15 @@ public final class PluginBridgeAdapter: @unchecked Sendable {
     // MARK: - Event Handling
 
     /// 处理插件事件
-    /// 内置插件（network, log, websocket）的原始事件已通过 EventCallbacks.reportEvent() 直接发送到 BridgeClient
+    /// 内置插件（network, log, websocket, performance）的原始事件已通过 EventCallbacks.reportEvent() 直接发送到 BridgeClient
     /// 这里收到的 PluginEvent 主要用于插件系统内部状态管理，通常只需日志记录
     /// 自定义插件的事件可能需要特殊处理
     private func handlePluginEvent(_ event: PluginEvent) {
         switch event.pluginId {
         case BuiltinPluginId.network,
              BuiltinPluginId.log,
-             BuiltinPluginId.webSocket:
+             BuiltinPluginId.webSocket,
+             BuiltinPluginId.performance:
             // 内置插件事件已通过 EventCallbacks 直接发送到 BridgeClient
             // 这里只做日志记录
             DebugLog.debug(.plugin, "Plugin event from \(event.pluginId): \(event.eventType)")
