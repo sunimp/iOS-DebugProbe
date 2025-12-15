@@ -29,7 +29,8 @@ public final class DebugProbeSettings {
     }
 
     // MARK: - Default Values
-
+    /// 默认启用状态
+    public static var defaultEnabled = true
     /// 默认主机地址 (可配置)
     public static var defaultHost = "127.0.0.1"
     /// 默认端口 (可配置)
@@ -130,9 +131,8 @@ public final class DebugProbeSettings {
     /// 是否启用 DebugProbe（默认 true）
     public var isEnabled: Bool {
         get {
-            // 如果从未设置过，默认为 true
             if userDefaults.object(forKey: Keys.isEnabled) == nil {
-                return true
+                return Self.defaultEnabled
             }
             return userDefaults.bool(forKey: Keys.isEnabled)
         }
