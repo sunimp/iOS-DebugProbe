@@ -6,11 +6,12 @@ iOS App 调试探针 SDK，用于实时捕获和分析 App 的网络请求、日
 >
 > **本项目全部代码和文档均由 Agent AI 生成**
 
-> **当前版本**: 1.4.0 | [更新日志](CHANGELOG.md) | **最后更新**: 2025-12-12
+> **当前版本**: 1.4.0 | [更新日志](CHANGELOG.md) | **最后更新**: 2025-12-15
 
 ## 功能特性
 
 ### 🌐 网络捕获
+
 - **HTTP/HTTPS 请求捕获** - 自动拦截所有网络请求，包括 URLSession、Alamofire 等
 - **WebSocket 监控** - 捕获 WebSocket 连接和消息
 - **请求/响应详情** - 完整的 Headers、Body、Timing 信息
@@ -42,6 +43,13 @@ iOS App 调试探针 SDK，用于实时捕获和分析 App 的网络请求、日
 - **SQLite 浏览** - 查看 App 内的 SQLite 数据库
 - **表数据查询** - 支持分页、排序、SQL 查询
 - **Schema 查看** - 查看表结构
+
+## 📸 截图预览
+
+| | |
+|:---:|:---:|
+| ![HTTP 请求列表](screenshots/screenshot_0.png) | ![请求详情](screenshots/screenshot_1.png) |
+| ![日志查看](screenshots/screenshot_2.png) | ![数据库检查](screenshots/screenshot_3.png) |
 
 ## 安装
 
