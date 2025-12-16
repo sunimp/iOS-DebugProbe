@@ -333,6 +333,10 @@ public struct PluginInfo: Codable, Sendable {
     public var isEnabled: Bool
     /// 暂停来源（仅当 state == .paused 时有意义）
     public var pauseSource: PauseSource?
+    /// 是否为子插件（如 Mock、Breakpoint、Chaos 是 HTTP 的子插件）
+    public var isSubPlugin: Bool
+    /// 父插件 ID（仅当 isSubPlugin 为 true 时有意义）
+    public var parentPluginId: String?
 
     public init(from plugin: DebugProbePlugin) {
         pluginId = plugin.pluginId
@@ -343,5 +347,15 @@ public struct PluginInfo: Codable, Sendable {
         state = plugin.state
         isEnabled = plugin.isEnabled
         pauseSource = nil  // 将在 PluginManager 中设置
+        // 根据依赖关系判断是否为子插件
+        // Mock、Breakpoint、Chaos 依赖 HTTP，是 HTTP 的子插件
+        if plugin.dependencies.contains(BuiltinPluginId.http),
+           [BuiltinPluginId.mock, BuiltinPluginId.breakpoint, BuiltinPluginId.chaos].contains(plugin.pluginId) {
+            isSubPlugin = true
+            parentPluginId = BuiltinPluginId.http
+        } else {
+            isSubPlugin = false
+            parentPluginId = nil
+        }
     }
 }

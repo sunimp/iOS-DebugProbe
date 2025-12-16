@@ -6,10 +6,94 @@
 //
 
 import Foundation
+import Security
 
 #if canImport(UIKit)
     import UIKit
 #endif
+
+// MARK: - Keychain Device ID Manager
+
+/// 使用 Keychain 持久化存储设备 ID
+/// - App 卸载重装后设备 ID 保持不变
+/// - 不同 Bundle ID 的 App 有不同的设备 ID
+private enum KeychainDeviceIdManager {
+    /// Keychain service 名称（包含 bundle ID 以区分不同 App）
+    private static var service: String {
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.unknown.app"
+        return "com.debugprobe.deviceid.\(bundleId)"
+    }
+
+    /// Keychain account 名称
+    private static let account = "device_id"
+
+    /// 获取或创建设备 ID
+    /// - 首先尝试从 Keychain 读取
+    /// - 如果不存在，生成新的 UUID 并保存到 Keychain
+    static func getOrCreateDeviceId() -> String {
+        // 尝试从 Keychain 读取
+        if let existingId = readFromKeychain() {
+            return existingId
+        }
+
+        // 生成新的设备 ID 并保存
+        let newId = UUID().uuidString
+        saveToKeychain(newId)
+        return newId
+    }
+
+    /// 从 Keychain 读取设备 ID
+    private static func readFromKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard
+            status == errSecSuccess,
+            let data = result as? Data,
+            let deviceId = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+
+        return deviceId
+    }
+
+    /// 保存设备 ID 到 Keychain
+    private static func saveToKeychain(_ deviceId: String) {
+        guard let data = deviceId.data(using: .utf8) else { return }
+
+        // 先尝试删除已存在的项
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        // 添加新项
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            // 设置为 App 卸载后数据仍保留
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("[DebugProbe] Failed to save device ID to Keychain: \(status)")
+        }
+    }
+}
 
 /// 设备信息模型，用于向 Debug Hub 注册设备
 public struct DeviceInfo: Codable {
@@ -82,7 +166,8 @@ public enum DeviceInfoProvider {
                 let isSimulator = false
             #endif
 
-            let deviceId = device.identifierForVendor?.uuidString ?? UUID().uuidString
+            // 使用 Keychain 持久化的设备 ID（重装后保持不变，不同 App 有不同 ID）
+            let deviceId = KeychainDeviceIdManager.getOrCreateDeviceId()
             // deviceName 始终使用系统设备名称
             let deviceName = device.name
             // deviceAlias 为用户设置的别名
@@ -96,7 +181,8 @@ public enum DeviceInfoProvider {
 
         #else
             let isSimulator = false
-            let deviceId = UUID().uuidString
+            // 使用 Keychain 持久化的设备 ID（重装后保持不变，不同 App 有不同 ID）
+            let deviceId = KeychainDeviceIdManager.getOrCreateDeviceId()
             // macOS 上 deviceName 使用系统名称，deviceAlias 为用户设置的别名
             let deviceName = Host.current().localizedName ?? "Mac"
             let deviceAlias = DebugProbeSettings.shared.deviceAlias

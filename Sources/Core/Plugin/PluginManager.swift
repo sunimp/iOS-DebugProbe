@@ -132,9 +132,26 @@ public final class PluginManager: @unchecked Sendable {
         withLock { Array(plugins.values) }
     }
 
-    /// 获取所有插件信息
+    /// 主插件固定排序（HTTP、WebSocket、Log、Database、Performance）
+    private static let mainPluginOrder: [String] = [
+        BuiltinPluginId.http,
+        BuiltinPluginId.webSocket,
+        BuiltinPluginId.log,
+        BuiltinPluginId.database,
+        BuiltinPluginId.performance,
+    ]
+
+    /// 子插件固定排序（Mock、Breakpoint、Chaos）
+    private static let subPluginOrder: [String] = [
+        BuiltinPluginId.mock,
+        BuiltinPluginId.breakpoint,
+        BuiltinPluginId.chaos,
+    ]
+
+    /// 获取所有插件信息（固定排序：主插件后紧跟其子插件）
+    /// 排序规则：HTTP -> Mock -> Breakpoint -> Chaos -> WebSocket -> Log -> Database -> Performance
     public func getAllPluginInfos() -> [PluginInfo] {
-        getAllPlugins().map { plugin in
+        let allInfos = getAllPlugins().map { plugin in
             var info = PluginInfo(from: plugin)
             // 设置暂停来源
             if plugin.state == .paused {
@@ -142,6 +159,35 @@ public final class PluginManager: @unchecked Sendable {
             }
             return info
         }
+
+        // 分离主插件和子插件
+        let mainInfos = allInfos.filter { !$0.isSubPlugin }
+        let subInfos = allInfos.filter(\.isSubPlugin)
+
+        // 按固定顺序排列主插件
+        let sortedMain = mainInfos.sorted { a, b in
+            let aIndex = Self.mainPluginOrder.firstIndex(of: a.pluginId) ?? Int.max
+            let bIndex = Self.mainPluginOrder.firstIndex(of: b.pluginId) ?? Int.max
+            return aIndex < bIndex
+        }
+
+        // 按固定顺序排列子插件
+        let sortedSub = subInfos.sorted { a, b in
+            let aIndex = Self.subPluginOrder.firstIndex(of: a.pluginId) ?? Int.max
+            let bIndex = Self.subPluginOrder.firstIndex(of: b.pluginId) ?? Int.max
+            return aIndex < bIndex
+        }
+
+        // 将子插件插入到其父插件后面
+        var result: [PluginInfo] = []
+        for main in sortedMain {
+            result.append(main)
+            // 添加该主插件的所有子插件
+            let children = sortedSub.filter { $0.parentPluginId == main.pluginId }
+            result.append(contentsOf: children)
+        }
+
+        return result
     }
 
     /// 获取插件的暂停来源
@@ -263,6 +309,7 @@ public final class PluginManager: @unchecked Sendable {
         }
 
         let previousEnabled = plugin.isEnabled
+        var newState: PluginState?
 
         if enabled {
             // 如果当前状态是 paused 或 stopped，则恢复/启动
@@ -270,15 +317,21 @@ public final class PluginManager: @unchecked Sendable {
                 // 清除暂停来源
                 _ = withLock { pauseSources.removeValue(forKey: pluginId) }
                 await plugin.resume()
-                notifyPluginStateChanged(pluginId, state: .running)
+                newState = .running
             } else if plugin.state == .stopped {
                 do {
                     try await plugin.start()
-                    notifyPluginStateChanged(pluginId, state: .running)
+                    newState = .running
                 } catch {
                     DebugLog.error(.plugin, "Failed to start plugin \(pluginId): \(error)")
-                    notifyPluginStateChanged(pluginId, state: .error)
+                    newState = .error
                 }
+            }
+
+            // 启用父插件时，同时启用所有子插件
+            let childPluginIds = getChildPluginIds(for: pluginId)
+            for childId in childPluginIds {
+                await enableChildPlugin(childId)
             }
         } else {
             // 禁用插件（暂停而非完全停止，保留状态）
@@ -286,11 +339,12 @@ public final class PluginManager: @unchecked Sendable {
                 // 设置暂停来源为 App
                 withLock { pauseSources[pluginId] = .app }
                 await plugin.pause()
-                notifyPluginStateChanged(pluginId, state: .paused)
+                newState = .paused
             }
         }
 
-        // 如果启用状态发生变化，通知 Hub 并保存到本地
+        // 如果启用状态发生变化，先保存持久化，再发送通知
+        // 顺序很重要：UI 收到通知后会从持久化读取状态，必须先保存
         let newEnabled = plugin.isEnabled
         if previousEnabled != newEnabled {
             // 持久化到 UserDefaults
@@ -299,7 +353,53 @@ public final class PluginManager: @unchecked Sendable {
             onPluginEnabledStateChanged?(pluginId, newEnabled)
         }
 
+        // 最后发送状态变化通知（确保持久化已更新）
+        if let state = newState {
+            notifyPluginStateChanged(pluginId, state: state)
+        }
+
         DebugLog.info(.plugin, "Plugin \(pluginId) \(enabled ? "enabled" : "disabled") by App")
+    }
+
+    /// 获取指定插件的所有子插件 ID
+    private func getChildPluginIds(for parentId: String) -> [String] {
+        getAllPluginInfos()
+            .filter { $0.isSubPlugin && $0.parentPluginId == parentId }
+            .map(\.pluginId)
+    }
+
+    /// 启用子插件（内部方法，不触发级联操作）
+    private func enableChildPlugin(_ pluginId: String) async {
+        guard let plugin = getPlugin(pluginId: pluginId) else { return }
+
+        let previousEnabled = plugin.isEnabled
+        var newState: PluginState?
+
+        if plugin.state == .paused {
+            _ = withLock { pauseSources.removeValue(forKey: pluginId) }
+            await plugin.resume()
+            newState = .running
+        } else if plugin.state == .stopped {
+            do {
+                try await plugin.start()
+                newState = .running
+            } catch {
+                DebugLog.error(.plugin, "Failed to start child plugin \(pluginId): \(error)")
+                newState = .error
+            }
+        }
+
+        let newEnabled = plugin.isEnabled
+        if previousEnabled != newEnabled {
+            DebugProbeSettings.shared.setPluginEnabled(pluginId, enabled: newEnabled)
+            onPluginEnabledStateChanged?(pluginId, newEnabled)
+        }
+
+        if let state = newState {
+            notifyPluginStateChanged(pluginId, state: state)
+        }
+
+        DebugLog.info(.plugin, "Child plugin \(pluginId) auto-enabled with parent")
     }
 
     /// WebUI 暂停/恢复指定插件

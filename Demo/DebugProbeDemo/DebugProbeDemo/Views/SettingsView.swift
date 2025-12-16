@@ -25,6 +25,8 @@ struct SettingsView: View {
     @State private var pluginRefreshCounter = 0
     /// 设备别名输入框焦点状态
     @FocusState private var isDeviceAliasFocused: Bool
+    /// 禁用父插件时的确认弹窗状态
+    @State private var disableParentPluginAlert: (pluginId: String, pluginName: String, childNames: [String])?
 
     var body: some View {
         List {
@@ -192,13 +194,45 @@ struct SettingsView: View {
             // MARK: - 5. 插件模块
 
             Section {
-                ForEach(pluginInfos, id: \.pluginId) { pluginInfo in
-                    PluginStatusRow(pluginInfo: pluginInfo)
+                ForEach(visiblePluginInfos, id: \.pluginId) { pluginInfo in
+                    PluginStatusRow(
+                        pluginInfo: pluginInfo,
+                        onDisableParentPlugin: { pluginId, pluginName, childNames in
+                            disableParentPluginAlert = (pluginId, pluginName, childNames)
+                        }
+                    )
                 }
             } header: {
                 Text("插件模块")
             } footer: {
                 Text("使用开关控制各插件的启用状态。禁用后的插件将停止发送数据到 DebugHub，WebUI 中也无法打开对应功能。")
+            }
+            .alert("禁用插件", isPresented: Binding(
+                get: { disableParentPluginAlert != nil },
+                set: { if !$0 { disableParentPluginAlert = nil } }
+            )) {
+                Button("取消", role: .cancel) {
+                    disableParentPluginAlert = nil
+                }
+                Button("确认关闭", role: .destructive) {
+                    if let alert = disableParentPluginAlert {
+                        Task {
+                            // 先禁用所有子插件
+                            for info in pluginInfos where info.isSubPlugin && info.parentPluginId == alert.pluginId {
+                                await DebugProbe.shared.pluginManager.setPluginEnabled(info.pluginId, enabled: false)
+                            }
+                            // 再禁用父插件
+                            await DebugProbe.shared.pluginManager.setPluginEnabled(alert.pluginId, enabled: false)
+                        }
+                        disableParentPluginAlert = nil
+                    }
+                }
+            } message: {
+                if let alert = disableParentPluginAlert {
+                    Text(
+                        "如果关闭 \(alert.pluginName) 插件，其子功能 \(alert.childNames.joined(separator: "、")) 也会一同关闭。\n\n是否确认关闭？"
+                    )
+                }
             }
 
             // MARK: - 6. 设备信息
@@ -298,6 +332,18 @@ struct SettingsView: View {
         return DebugProbe.shared.pluginManager.getAllPluginInfos()
     }
 
+    /// 可见的插件列表（父插件禁用时，其子插件不显示）
+    private var visiblePluginInfos: [PluginInfo] {
+        pluginInfos.filter { info in
+            // 如果是子插件，检查父插件是否启用
+            if info.isSubPlugin, let parentId = info.parentPluginId {
+                let parentEnabled = DebugProbeSettings.shared.getPluginEnabled(parentId) ?? true
+                return parentEnabled
+            }
+            return true
+        }
+    }
+
     // MARK: - Private Methods
 
     private func statusColor(for status: DebugProbeSettings.ConnectionStatusDetail) -> Color {
@@ -384,18 +430,77 @@ struct FeatureRow: View {
 /// 插件状态行（带开关控制）
 struct PluginStatusRow: View {
     let pluginInfo: PluginInfo
+    /// 禁用父插件时的回调（pluginId, pluginName, childNames）
+    var onDisableParentPlugin: ((String, String, [String]) -> Void)?
+
+    /// 开关状态：使用 @State 来驱动 UI 更新
     @State private var isEnabled: Bool = true
 
-    /// App 端的开关状态（持久化的）
-    private var appSwitchEnabled: Bool {
-        // 从持久化设置读取，默认为 true
+    /// 获取已启用的子插件名称列表（只有启用状态的子插件才需要提示）
+    private var enabledChildPluginNames: [String] {
+        guard !pluginInfo.isSubPlugin else { return [] }
+        return DebugProbe.shared.pluginManager.getAllPluginInfos()
+            .filter { info in
+                info.isSubPlugin &&
+                    info.parentPluginId == pluginInfo.pluginId &&
+                    (DebugProbeSettings.shared.getPluginEnabled(info.pluginId) ?? true)
+            }
+            .map(\.displayName)
+    }
+
+    /// 从持久化设置读取启用状态
+    private var persistedEnabled: Bool {
         DebugProbeSettings.shared.getPluginEnabled(pluginInfo.pluginId) ?? true
+    }
+
+    /// 自定义 Toggle 绑定，用于拦截关闭操作
+    private var toggleBinding: Binding<Bool> {
+        Binding(
+            get: { isEnabled },
+            set: { newValue in
+                // 如果是关闭操作，且有启用的子插件，需要弹窗确认
+                if !newValue, !enabledChildPluginNames.isEmpty {
+                    // 调用回调显示弹窗，不改变开关状态
+                    onDisableParentPlugin?(pluginInfo.pluginId, pluginInfo.displayName, enabledChildPluginNames)
+                } else {
+                    // 直接更新状态
+                    isEnabled = newValue
+                    // 执行实际的启用/禁用操作
+                    let currentPersisted = persistedEnabled
+                    if currentPersisted != newValue {
+                        Task {
+                            await DebugProbe.shared.pluginManager.setPluginEnabled(
+                                pluginInfo.pluginId,
+                                enabled: newValue
+                            )
+                        }
+                    }
+                }
+            }
+        )
     }
 
     var body: some View {
         HStack {
+            // 子插件缩进显示
+            if pluginInfo.isSubPlugin {
+                Spacer()
+                    .frame(width: 20)
+            }
+
             Text(pluginInfo.displayName)
             Spacer()
+
+            // 子插件显示父插件标签
+            if pluginInfo.isSubPlugin, let parentId = pluginInfo.parentPluginId {
+                Text(parentId.uppercased())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.purple.opacity(0.15))
+                    .cornerRadius(3)
+            }
 
             // 运行状态标签
             Text(stateText)
@@ -406,19 +511,28 @@ struct PluginStatusRow: View {
                 .background(stateColor.opacity(0.15))
                 .cornerRadius(4)
 
-            // 开关控制（基于 App 端持久化设置）
-            Toggle("", isOn: $isEnabled)
+            // 开关控制（使用自定义绑定拦截操作）
+            Toggle("", isOn: toggleBinding)
                 .labelsHidden()
-                .onChange(of: isEnabled) { newValue in
-                    Task {
-                        await DebugProbe.shared.pluginManager.setPluginEnabled(pluginInfo.pluginId, enabled: newValue)
-                    }
-                }
         }
         .onAppear {
-            // 根据 App 端持久化设置初始化开关（不受 WebUI 影响）
-            isEnabled = appSwitchEnabled
+            // 初始化时从持久化设置读取
+            isEnabled = persistedEnabled
         }
+        .onReceive(NotificationCenter.default
+            .publisher(for: PluginManager.pluginStateDidChangeNotification)) { _ in
+                // 插件状态变化时，同步开关状态
+                let newState = persistedEnabled
+                if isEnabled != newState {
+                    isEnabled = newState
+                }
+        }
+    }
+
+    /// App 端的开关状态（持久化的）
+    private var appSwitchEnabled: Bool {
+        // 从持久化设置读取，默认为 true
+        DebugProbeSettings.shared.getPluginEnabled(pluginInfo.pluginId) ?? true
     }
 
     private var stateText: String {
