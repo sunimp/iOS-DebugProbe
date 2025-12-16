@@ -350,14 +350,16 @@ public final class PluginManager: @unchecked Sendable {
             }
         }
 
-        // 如果启用状态发生变化，先保存持久化，再发送通知
-        // 顺序很重要：UI 收到通知后会从持久化读取状态，必须先保存
-        let newEnabled = plugin.isEnabled
-        if previousEnabled != newEnabled {
+        // 检查是否需要更新持久化设置
+        // 注意：不能依赖 plugin.isEnabled，因为 start() 方法不会修改它
+        // 而是根据新的状态来判断是否启用
+        let actualEnabled = newState == .running || (enabled && plugin.state == .running)
+        let currentPersisted = DebugProbeSettings.shared.getPluginEnabled(pluginId) ?? true
+        if currentPersisted != actualEnabled {
             // 持久化到 UserDefaults
-            DebugProbeSettings.shared.setPluginEnabled(pluginId, enabled: newEnabled)
+            DebugProbeSettings.shared.setPluginEnabled(pluginId, enabled: actualEnabled)
             // 通知 Hub
-            onPluginEnabledStateChanged?(pluginId, newEnabled)
+            onPluginEnabledStateChanged?(pluginId, actualEnabled)
         }
 
         // 最后发送状态变化通知（确保持久化已更新）
@@ -379,7 +381,6 @@ public final class PluginManager: @unchecked Sendable {
     private func enableChildPlugin(_ pluginId: String) async {
         guard let plugin = getPlugin(pluginId: pluginId) else { return }
 
-        let previousEnabled = plugin.isEnabled
         var newState: PluginState?
 
         switch plugin.state {
@@ -401,10 +402,12 @@ public final class PluginManager: @unchecked Sendable {
             break
         }
 
-        let newEnabled = plugin.isEnabled
-        if previousEnabled != newEnabled {
-            DebugProbeSettings.shared.setPluginEnabled(pluginId, enabled: newEnabled)
-            onPluginEnabledStateChanged?(pluginId, newEnabled)
+        // 检查是否需要更新持久化设置
+        let actualEnabled = newState == .running || plugin.state == .running
+        let currentPersisted = DebugProbeSettings.shared.getPluginEnabled(pluginId) ?? true
+        if currentPersisted != actualEnabled {
+            DebugProbeSettings.shared.setPluginEnabled(pluginId, enabled: actualEnabled)
+            onPluginEnabledStateChanged?(pluginId, actualEnabled)
         }
 
         if let state = newState {
