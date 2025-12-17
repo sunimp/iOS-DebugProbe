@@ -176,7 +176,7 @@ public final class EventPersistenceQueue {
 
             // 编码事件
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let eventData = try encoder.encode(event)
 
             // 获取事件类型
@@ -238,7 +238,7 @@ public final class EventPersistenceQueue {
 
             var idsToDelete: [Int64] = []
             let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .iso8601WithMilliseconds
 
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let rowId = sqlite3_column_int64(stmt, 0)
@@ -287,7 +287,7 @@ public final class EventPersistenceQueue {
             sqlite3_bind_int(stmt, 1, Int32(limit))
 
             let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .iso8601WithMilliseconds
 
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let blobPointer = sqlite3_column_blob(stmt, 0) {

@@ -393,7 +393,7 @@ public final class DebugBridgeClient: NSObject {
     private func send(_ message: BridgeMessage, completion: ((Error?) -> Void)? = nil) {
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let data = try encoder.encode(message)
 
             webSocketTask?.send(.data(data)) { [weak self] error in

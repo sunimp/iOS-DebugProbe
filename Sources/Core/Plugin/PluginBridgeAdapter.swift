@@ -203,7 +203,7 @@ public final class PluginBridgeAdapter: @unchecked Sendable {
     private func routeMockRulesUpdate(_ rules: [MockRule]) async {
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let payload = try encoder.encode(rules)
 
             let command = PluginCommand(
@@ -221,7 +221,7 @@ public final class PluginBridgeAdapter: @unchecked Sendable {
     private func routeBreakpointRulesUpdate(_ rules: [BreakpointRule]) async {
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let payload = try encoder.encode(rules)
 
             let command = PluginCommand(
@@ -239,7 +239,7 @@ public final class PluginBridgeAdapter: @unchecked Sendable {
     private func routeChaosRulesUpdate(_ rules: [ChaosRule]) async {
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let payload = try encoder.encode(rules)
 
             let command = PluginCommand(
@@ -257,7 +257,7 @@ public final class PluginBridgeAdapter: @unchecked Sendable {
     private func routeDBCommand(_ command: DBCommand) async {
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .iso8601WithMilliseconds
             let payload = try encoder.encode(command)
 
             let pluginCommand = PluginCommand(
