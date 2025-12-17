@@ -267,8 +267,9 @@ public final class PageTimingRecorder: @unchecked Sendable {
                 return false
             }
 
-            // 系统 VC 类名通常以 _ 或 UI 开头
-            if className.hasPrefix("_") {
+            // 系统 VC 类名通常以 _ 开头，但需要排除 SwiftUI 的 UIHostingController
+            // SwiftUI 的类名形如 _TtGC7SwiftUI19UIHostingControllerV...
+            if className.hasPrefix("_") && !className.contains("UIHostingController") {
                 return false
             }
 
