@@ -6,7 +6,7 @@ iOS App 调试探针 SDK，用于实时捕获和分析 App 的网络请求、日
 >
 > **本项目全部代码和文档均由 AI Agent 生成**
 
-> **当前版本**: 1.4.0 | [更新日志](CHANGELOG.md) | **最后更新**: 2025-12-15
+> **当前版本**: 1.5.0 | [更新日志](CHANGELOG.md) | **最后更新**: 2025-12-17
 
 ## 功能特性
 
@@ -43,6 +43,13 @@ iOS App 调试探针 SDK，用于实时捕获和分析 App 的网络请求、日
 - **SQLite 浏览** - 查看 App 内的 SQLite 数据库
 - **表数据查询** - 支持分页、排序、SQL 查询
 - **Schema 查看** - 查看表结构
+
+### 📊 性能监控
+- **CPU 使用率** - 实时监控 App CPU 占用
+- **内存使用** - 监控内存占用和内存压力
+- **帧率 (FPS)** - 实时帧率监控和卡顿检测
+- **App 启动时间** - 冷启动/热启动耗时分析
+- **页面耗时** - 自动/手动采集页面加载耗时
 
 ## 📸 截图预览
 
@@ -313,7 +320,7 @@ DebugProbe 采用插件化架构，所有功能模块（网络、日志、Mock �
 | `database` | DatabasePlugin | SQLite 数据库检查 |
 | `breakpoint` | BreakpointPlugin | 请求/响应断点调试 |
 | `chaos` | ChaosPlugin | 故障注入（Chaos Engineering） |
-| `performance` | PerformancePlugin | 性能监控（CPU/内存/FPS） |
+| `performance` | PerformancePlugin | 性能监控（CPU/内存/FPS/页面耗时） |
 
 ### 目录结构
 

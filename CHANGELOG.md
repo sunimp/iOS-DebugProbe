@@ -7,6 +7,29 @@
 
 ---
 
+## [1.5.0] - 2025-12-17
+
+### 新增
+
+#### 页面耗时监控
+- 新增 `PageTimingRecorder` 页面耗时记录器
+- 支持 UIKit 自动采集（viewWillAppear → viewDidAppear）
+- 支持 SwiftUI UIHostingController 自动采集
+- 支持手动 API 精确控制页面生命周期标记
+- 支持自定义标记点（markers）
+- 支持采样率控制和黑/白名单
+
+#### 性能监控增强
+- 新增页面耗时数据上报
+- 支持冷启动首屏标记
+- 支持页面导航类型（push/pop）
+
+### 修复
+
+- 修复 SwiftUI 页面被错误过滤的问题（shouldTrack 逻辑优化）
+
+---
+
 ## [1.4.0] - 2025-12-12
 
 ### 新增
