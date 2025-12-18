@@ -119,9 +119,9 @@ public final class DatabaseRegistry: @unchecked Sendable {
     /// 设置数据库的账户归属状态
     /// - Parameters:
     ///   - currentUserPathPrefix: 当前用户数据库路径前缀
-    ///   - sharedPathPatterns: 共享数据库的路径关键词列表（包含这些关键词的视为共享）
-    /// - Note: 不匹配 currentUserPathPrefix 且不匹配 sharedPathPatterns 的数据库会被标记为 otherUser
-    public func setOwnership(currentUserPathPrefix: String, sharedPathPatterns: [String] = []) {
+    ///   - sharedDbNamePatterns: 共享数据库名称/ID 中包含的关键词列表（忽略大小写）
+    /// - Note: 匹配优先级：currentUserPathPrefix > sharedDbNamePatterns > otherUser
+    public func setOwnership(currentUserPathPrefix: String, sharedDbNamePatterns: [String] = []) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -132,16 +132,24 @@ public final class DatabaseRegistry: @unchecked Sendable {
         for (id, var registered) in databases {
             var descriptor = registered.descriptor
             let dbPath = registered.url.path
+            let dbName = descriptor.name.lowercased()
+            let dbId = id.lowercased()
 
-            // 判断归属
+            // 判断归属（优先级：当前用户 > 共享 > 其他用户）
             let ownership: DatabaseDescriptor.AccountOwnership
             if dbPath.hasPrefix(currentUserPathPrefix) {
+                // 路径匹配当前用户
                 ownership = .currentUser
                 currentUserIds.append(id)
-            } else if sharedPathPatterns.contains(where: { dbPath.contains($0) }) {
+            } else if sharedDbNamePatterns.contains(where: { pattern in
+                let p = pattern.lowercased()
+                return dbName.contains(p) || dbId.contains(p)
+            }) {
+                // 名称/ID 包含共享关键词
                 ownership = .shared
                 sharedIds.append(id)
             } else {
+                // 其余为其他用户
                 ownership = .otherUser
                 otherUserIds.append(id)
             }
@@ -150,7 +158,7 @@ public final class DatabaseRegistry: @unchecked Sendable {
             registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
             databases[id] = registered
 
-            DebugLog.debug("[DatabaseRegistry] DB '\(id)' ownership=\(ownership.rawValue) path=\(dbPath)")
+            DebugLog.debug("[DatabaseRegistry] DB '\(id)' name='\(descriptor.name)' ownership=\(ownership.rawValue)")
         }
 
         DebugLog.info(
