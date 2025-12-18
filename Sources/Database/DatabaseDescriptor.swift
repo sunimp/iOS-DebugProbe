@@ -99,6 +99,12 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
     /// 账户归属状态（多账户场景下用于区分）
     public var ownership: AccountOwnership
 
+    /// 数据库所有者标识符
+    /// - 对于 currentUser：当前用户 UUID
+    /// - 对于 otherUser：其他用户 UUID
+    /// - 对于 shared：nil
+    public var ownerIdentifier: String?
+
     /// 初始化
     public init(
         id: String,
@@ -107,7 +113,8 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
         location: Location,
         isSensitive: Bool = false,
         visibleInInspector: Bool = true,
-        ownership: AccountOwnership = .shared
+        ownership: AccountOwnership = .shared,
+        ownerIdentifier: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -116,5 +123,6 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
         self.isSensitive = isSensitive
         self.visibleInInspector = visibleInInspector
         self.ownership = ownership
+        self.ownerIdentifier = ownerIdentifier
     }
 }

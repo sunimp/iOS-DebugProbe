@@ -118,12 +118,20 @@ public final class DatabaseRegistry: @unchecked Sendable {
 
     /// 设置数据库的账户归属状态
     /// - Parameters:
-    ///   - currentUserPathPrefix: 当前用户数据库路径前缀
+    ///   - currentUserPathPrefix: 当前用户数据库路径前缀（如 Documents/{userUuid}/）
     ///   - sharedDbNamePatterns: 共享数据库名称/ID 中包含的关键词列表（忽略大小写）
+    ///   - userPathComponentIndex: 路径中用户标识符所在的 component 索引（从 Documents 开始计算，默认为 0）
     /// - Note: 匹配优先级：currentUserPathPrefix > sharedDbNamePatterns > otherUser
-    public func setOwnership(currentUserPathPrefix: String, sharedDbNamePatterns: [String] = []) {
+    public func setOwnership(
+        currentUserPathPrefix: String,
+        sharedDbNamePatterns: [String] = [],
+        userPathComponentIndex: Int = 0
+    ) {
         lock.lock()
         defer { lock.unlock() }
+
+        // 提取当前用户标识符（从 currentUserPathPrefix 中提取）
+        let currentUserIdentifier = extractUserIdentifier(from: currentUserPathPrefix)
 
         var currentUserIds: [String] = []
         var sharedIds: [String] = []
@@ -137,9 +145,12 @@ public final class DatabaseRegistry: @unchecked Sendable {
 
             // 判断归属（优先级：当前用户 > 共享 > 其他用户）
             let ownership: DatabaseDescriptor.AccountOwnership
+            var ownerIdentifier: String?
+
             if dbPath.hasPrefix(currentUserPathPrefix) {
                 // 路径匹配当前用户
                 ownership = .currentUser
+                ownerIdentifier = currentUserIdentifier
                 currentUserIds.append(id)
             } else if sharedDbNamePatterns.contains(where: { pattern in
                 let p = pattern.lowercased()
@@ -147,23 +158,61 @@ public final class DatabaseRegistry: @unchecked Sendable {
             }) {
                 // 名称/ID 包含共享关键词
                 ownership = .shared
+                ownerIdentifier = nil
                 sharedIds.append(id)
             } else {
                 // 其余为其他用户
                 ownership = .otherUser
+                // 从路径中提取用户标识符
+                ownerIdentifier = extractUserIdentifier(from: dbPath)
                 otherUserIds.append(id)
             }
 
             descriptor.ownership = ownership
+            descriptor.ownerIdentifier = ownerIdentifier
             registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
             databases[id] = registered
 
-            DebugLog.debug("[DatabaseRegistry] DB '\(id)' name='\(descriptor.name)' ownership=\(ownership.rawValue)")
+            DebugLog.debug("[DatabaseRegistry] DB '\(id)' ownership=\(ownership.rawValue) owner=\(ownerIdentifier ?? "nil")")
         }
 
         DebugLog.info(
             "[DatabaseRegistry] Ownership updated - currentUser: \(currentUserIds.count), shared: \(sharedIds.count), otherUser: \(otherUserIds.count)"
         )
+    }
+
+    /// 清除所有归属状态（退出登录时调用）
+    public func clearOwnership() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for (id, var registered) in databases {
+            var descriptor = registered.descriptor
+            descriptor.ownership = .shared
+            descriptor.ownerIdentifier = nil
+            registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+            databases[id] = registered
+        }
+
+        DebugLog.info("[DatabaseRegistry] Ownership cleared for all databases")
+    }
+
+    /// 从路径中提取用户标识符
+    /// - Parameter path: 数据库路径（如 /path/to/Documents/{userUuid}/im/xxx.db）
+    /// - Returns: 用户标识符（如 userUuid）
+    private func extractUserIdentifier(from path: String) -> String? {
+        // 查找 "Documents/" 后的第一个路径组件
+        let components = path.components(separatedBy: "/")
+        if let documentsIndex = components.firstIndex(of: "Documents"),
+           documentsIndex + 1 < components.count
+        {
+            let userIdentifier = components[documentsIndex + 1]
+            // 排除空字符串和常见的非用户目录
+            if !userIdentifier.isEmpty, !["im", "cache", "log"].contains(userIdentifier.lowercased()) {
+                return userIdentifier
+            }
+        }
+        return nil
     }
 
     /// 设置指定数据库的归属状态
