@@ -56,7 +56,7 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
     public var smartSamplingEnabled: Bool = true
 
     /// 告警配置
-    public var alertConfig: AlertConfig = AlertConfig(rules: AlertConfig.defaultRules)
+    public var alertConfig: AlertConfig = .init(rules: AlertConfig.defaultRules)
 
     // MARK: - Page Timing Configuration
 
@@ -101,6 +101,9 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
     private static var appLaunchMetrics: AppLaunchMetrics?
     private static let launchMetricsLock = NSLock()
 
+    /// PreMain 详细数据缓存
+    private static var cachedPreMainDetails: PreMainDetails?
+
     // MARK: - Lifecycle
 
     public init() {}
@@ -123,6 +126,10 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
             } else {
                 phaseTimestamps[phase] = now
             }
+        } else if phase == .mainExecuted {
+            // main() 执行时，同时标记 PreMainMonitor
+            PreMainMonitor.markMainExecuted()
+            phaseTimestamps[phase] = now
         } else {
             phaseTimestamps[phase] = now
         }
@@ -150,7 +157,7 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         // timeval 是从 1970-01-01 00:00:00 UTC 开始的秒数
         // 差值是 978307200 秒
         let unixTime = Double(startTime.tv_sec) + Double(startTime.tv_usec) / 1_000_000
-        let cfAbsoluteTime = unixTime - 978307200
+        let cfAbsoluteTime = unixTime - 978_307_200
         return cfAbsoluteTime
     }
 
@@ -177,6 +184,13 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
     private static func calculateLaunchMetrics() {
         guard let firstFrame = phaseTimestamps[.firstFrameRendered] else { return }
 
+        // 如果 processStart 没有被记录，自动补记（使用系统进程启动时间）
+        if phaseTimestamps[.processStart] == nil {
+            if let processStartTime = getProcessStartTime() {
+                phaseTimestamps[.processStart] = processStartTime
+            }
+        }
+
         let processStart = phaseTimestamps[.processStart]
         let mainExecuted = phaseTimestamps[.mainExecuted]
         let didFinish = phaseTimestamps[.didFinishLaunching]
@@ -187,8 +201,14 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         var launchToFirstFrameTime: Double?
         var totalLaunchTime: Double?
 
-        // PreMain: processStart -> mainExecuted
-        if let start = processStart, let main = mainExecuted, main > start {
+        // PreMain: 优先使用 PreMainMonitor 的精确数据
+        let preMainDurations = PreMainMonitor.durations
+        if PreMainMonitor.isMainExecutedMarked, preMainDurations.totalPreMainMs > 0 {
+            // 使用 dyld 回调 + mach_absolute_time 的精确数据
+            // 加上估算的内核启动时间，得到完整的 PreMain 时间
+            preMainTime = preMainDurations.estimatedFullPreMainMs
+        } else if let start = processStart, let main = mainExecuted, main > start {
+            // 回退到旧的 CFAbsoluteTime 方式
             preMainTime = (main - start) * 1000
         }
 
@@ -207,6 +227,15 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
             totalLaunchTime = (firstFrame - start) * 1000
         }
 
+        // 缓存 PreMain 详细数据
+        if PreMainMonitor.isMainExecutedMarked {
+            cachedPreMainDetails = PreMainDetails(
+                durations: preMainDurations,
+                dylibStats: PreMainMonitor.dylibStats,
+                slowestDylibs: PreMainMonitor.getSlowestDylibs(count: 20)
+            )
+        }
+
         appLaunchMetrics = AppLaunchMetrics(
             totalTime: totalLaunchTime ?? 0,
             preMainTime: preMainTime,
@@ -214,6 +243,29 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
             launchToFirstFrameTime: launchToFirstFrameTime,
             timestamp: Date()
         )
+    }
+
+    /// 获取 PreMain 详细数据
+    /// 包含 dyld 各阶段耗时和 dylib 加载详情
+    public static func getPreMainDetails() -> PreMainDetails? {
+        launchMetricsLock.lock()
+        defer { launchMetricsLock.unlock() }
+        return cachedPreMainDetails
+    }
+
+    /// 获取所有 dylib 加载信息
+    public static func getAllDylibLoadInfo() -> [DylibLoadInfo] {
+        PreMainMonitor.getAllDylibs()
+    }
+
+    /// 获取加载最慢的 N 个 dylib
+    public static func getSlowestDylibs(count: Int) -> [DylibLoadInfo] {
+        PreMainMonitor.getSlowestDylibs(count: count)
+    }
+
+    /// 获取用户库加载信息（非系统库）
+    public static func getUserDylibLoadInfo() -> [DylibLoadInfo] {
+        PreMainMonitor.getUserDylibs()
     }
 
     /// 重置启动记录（用于热启动场景）
@@ -245,9 +297,9 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         }
 
         // 恢复告警配置
-        if let alertConfigData: Data = context.getConfiguration(for: "performance.alertConfig"),
-           let savedConfig = try? JSONDecoder().decode(AlertConfig.self, from: alertConfigData)
-        {
+        if
+            let alertConfigData: Data = context.getConfiguration(for: "performance.alertConfig"),
+            let savedConfig = try? JSONDecoder().decode(AlertConfig.self, from: alertConfigData) {
             alertConfig = savedConfig
         }
 
@@ -306,7 +358,10 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         reportAppLaunchMetrics()
 
         stateQueue.sync { state = .running }
-        context?.logInfo("PerformancePlugin started with interval: \(sampleInterval)s, smart sampling: \(smartSamplingEnabled), pageTiming: \(monitorPageTiming)")
+        context?
+            .logInfo(
+                "PerformancePlugin started with interval: \(sampleInterval)s, smart sampling: \(smartSamplingEnabled), pageTiming: \(monitorPageTiming)"
+            )
     }
 
     public func pause() async {
@@ -546,11 +601,39 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         let metricsData = batch.map { m in
             PerformanceMetricsData(
                 timestamp: m.timestamp,
-                cpu: m.cpu.map { CPUMetricsData(usage: $0.usage, userTime: $0.userTime, systemTime: $0.systemTime, threadCount: $0.threadCount) },
-                memory: m.memory.map { MemoryMetricsData(usedMemory: $0.usedMemory, peakMemory: $0.peakMemory, freeMemory: $0.freeMemory, memoryPressure: $0.memoryPressure.rawValue, footprintRatio: $0.footprintRatio) },
-                fps: m.fps.map { FPSMetricsData(fps: $0.fps, droppedFrames: $0.droppedFrames, jankCount: $0.jankCount, averageRenderTime: $0.averageRenderTime) },
-                network: m.network.map { NetworkTrafficMetricsData(bytesReceived: $0.bytesReceived, bytesSent: $0.bytesSent, receivedRate: $0.receivedRate, sentRate: $0.sentRate) },
-                diskIO: m.diskIO.map { DiskIOMetricsData(readBytes: $0.readBytes, writeBytes: $0.writeBytes, readOps: $0.readOps, writeOps: $0.writeOps, readRate: $0.readRate, writeRate: $0.writeRate) }
+                cpu: m.cpu.map { CPUMetricsData(
+                    usage: $0.usage,
+                    userTime: $0.userTime,
+                    systemTime: $0.systemTime,
+                    threadCount: $0.threadCount
+                ) },
+                memory: m.memory.map { MemoryMetricsData(
+                    usedMemory: $0.usedMemory,
+                    peakMemory: $0.peakMemory,
+                    freeMemory: $0.freeMemory,
+                    memoryPressure: $0.memoryPressure.rawValue,
+                    footprintRatio: $0.footprintRatio
+                ) },
+                fps: m.fps.map { FPSMetricsData(
+                    fps: $0.fps,
+                    droppedFrames: $0.droppedFrames,
+                    jankCount: $0.jankCount,
+                    averageRenderTime: $0.averageRenderTime
+                ) },
+                network: m.network.map { NetworkTrafficMetricsData(
+                    bytesReceived: $0.bytesReceived,
+                    bytesSent: $0.bytesSent,
+                    receivedRate: $0.receivedRate,
+                    sentRate: $0.sentRate
+                ) },
+                diskIO: m.diskIO.map { DiskIOMetricsData(
+                    readBytes: $0.readBytes,
+                    writeBytes: $0.writeBytes,
+                    readOps: $0.readOps,
+                    writeOps: $0.writeOps,
+                    readRate: $0.readRate,
+                    writeRate: $0.writeRate
+                ) }
             )
         }
 
@@ -566,12 +649,41 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
     private func reportAppLaunchMetrics() {
         guard let launchMetrics = Self.appLaunchMetrics else { return }
 
+        // 构建 PreMain 细分数据
+        var preMainDetailsData: PreMainDetailsData?
+        if let details = Self.cachedPreMainDetails {
+            let dylibStatsData = DylibStatsData(
+                totalCount: details.dylibStats.totalCount,
+                systemCount: details.dylibStats.systemCount,
+                userCount: details.dylibStats.userCount
+            )
+
+            let slowestDylibsData = details.slowestDylibs.map { dylib in
+                DylibLoadInfoData(
+                    name: dylib.name,
+                    loadDurationMs: dylib.loadDurationMs,
+                    isSystemLibrary: dylib.isSystemLibrary
+                )
+            }
+
+            preMainDetailsData = PreMainDetailsData(
+                dylibLoadingMs: details.durations.dylibLoadingMs,
+                staticInitializerMs: details.durations.staticInitializerMs,
+                postDyldToMainMs: details.durations.postDyldToMainMs,
+                objcLoadMs: details.durations.objcLoadMs > 0 ? details.durations.objcLoadMs : nil,
+                estimatedKernelToConstructorMs: details.durations.estimatedKernelToConstructorMs,
+                dylibStats: dylibStatsData,
+                slowestDylibs: slowestDylibsData
+            )
+        }
+
         let launchData = AppLaunchMetricsData(
             totalTime: launchMetrics.totalTime,
             preMainTime: launchMetrics.preMainTime,
             mainToLaunchTime: launchMetrics.mainToLaunchTime,
             launchToFirstFrameTime: launchMetrics.launchToFirstFrameTime,
-            timestamp: launchMetrics.timestamp
+            timestamp: launchMetrics.timestamp,
+            preMainDetails: preMainDetailsData
         )
         let performanceEvent = PerformanceEvent(
             eventType: .appLaunch,
@@ -589,6 +701,14 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
         }
         if let launchToFrame = launchMetrics.launchToFirstFrameTime {
             logParts.append("launchToFirstFrame=\(launchToFrame)ms")
+        }
+        if let details = preMainDetailsData {
+            if let dylibLoading = details.dylibLoadingMs {
+                logParts.append("dylibLoading=\(String(format: "%.1f", dylibLoading))ms")
+            }
+            if let dylibStats = details.dylibStats {
+                logParts.append("dylibs=\(dylibStats.totalCount)(\(dylibStats.userCount) user)")
+            }
         }
         context?.logInfo(logParts.joined(separator: ", "))
 
@@ -619,7 +739,10 @@ public final class PerformancePlugin: DebugProbePlugin, @unchecked Sendable {
             recorder.startAutoTracking()
         }
 
-        context?.logInfo("PageTimingRecorder setup: autoTracking=\(pageTimingAutoTrackingEnabled), samplingRate=\(pageTimingSamplingRate)")
+        context?
+            .logInfo(
+                "PageTimingRecorder setup: autoTracking=\(pageTimingAutoTrackingEnabled), samplingRate=\(pageTimingSamplingRate)"
+            )
     }
 
     /// 停止页面耗时记录器
@@ -1058,13 +1181,36 @@ public struct DiskIOMetrics: Codable, Sendable {
 /// App 启动阶段
 public enum LaunchPhase: String, Codable, Sendable, Hashable {
     /// 进程启动（main() 执行前，PreMain 阶段开始）
-    case processStart = "processStart"
+    case processStart
     /// main() 函数开始执行
-    case mainExecuted = "mainExecuted"
+    case mainExecuted
     /// application(_:didFinishLaunchingWithOptions:) 完成
-    case didFinishLaunching = "didFinishLaunching"
+    case didFinishLaunching
     /// 首帧渲染完成
-    case firstFrameRendered = "firstFrameRendered"
+    case firstFrameRendered
+}
+
+/// PreMain 详细数据
+/// 包含 dyld 各阶段耗时和 dylib 加载详情
+public struct PreMainDetails: Codable, Sendable {
+    /// PreMain 各阶段耗时
+    public let durations: PreMainDurations
+
+    /// dylib 统计信息
+    public let dylibStats: DylibStats
+
+    /// 加载最慢的 dylib 列表
+    public let slowestDylibs: [DylibLoadInfo]
+
+    public init(
+        durations: PreMainDurations,
+        dylibStats: DylibStats,
+        slowestDylibs: [DylibLoadInfo]
+    ) {
+        self.durations = durations
+        self.dylibStats = dylibStats
+        self.slowestDylibs = slowestDylibs
+    }
 }
 
 /// App 启动时间指标（分阶段记录）
@@ -1107,6 +1253,7 @@ public struct JankEvent: Codable, Sendable {
     /// 主线程调用栈（如果可获取）
     public let stackTrace: String?
 }
+
 // MARK: - Alert Models
 
 /// 告警级别
@@ -1168,13 +1315,13 @@ public enum AlertCondition: String, Codable, Sendable {
     public func evaluate(_ value: Double, threshold: Double) -> Bool {
         switch self {
         case .greaterThan:
-            return value > threshold
+            value > threshold
         case .lessThan:
-            return value < threshold
+            value < threshold
         case .greaterThanOrEqual:
-            return value >= threshold
+            value >= threshold
         case .lessThanOrEqual:
-            return value <= threshold
+            value <= threshold
         }
     }
 }
@@ -1671,8 +1818,9 @@ final class MemoryMonitor: @unchecked Sendable {
             let result: String
 
             // Swift 符号以 $s、_$s、$S 或 _$S 开头
-            if symbol.hasPrefix("$s") || symbol.hasPrefix("_$s") ||
-               symbol.hasPrefix("$S") || symbol.hasPrefix("_$S") {
+            if
+                symbol.hasPrefix("$s") || symbol.hasPrefix("_$s") ||
+                symbol.hasPrefix("$S") || symbol.hasPrefix("_$S") {
                 result = demangleSwiftSymbol(symbol) ?? symbol
             } else if symbol.hasPrefix("-[") || symbol.hasPrefix("+[") {
                 // ObjC 符号通常格式为 "-[Class method]" 或 "+[Class method]"
@@ -1700,9 +1848,10 @@ final class MemoryMonitor: @unchecked Sendable {
         /// 使用私有 API swift_demangle 进行解码
         private static func demangleSwiftSymbol(_ symbol: String) -> String? {
             // 尝试使用 Swift 运行时的 demangle 函数
-            if let demangled = _stdlib_demangleImpl(symbol),
-               !demangled.isEmpty,
-               demangled != symbol {
+            if
+                let demangled = _stdlib_demangleImpl(symbol),
+                !demangled.isEmpty,
+                demangled != symbol {
                 // 简化输出：移除泛型参数中的完整模块路径
                 return simplifySwiftSymbol(demangled)
             }
@@ -1794,7 +1943,7 @@ final class MemoryMonitor: @unchecked Sendable {
                 guard s.distance(from: index, to: s.endIndex) >= length else { break }
 
                 let endIndex = s.index(index, offsetBy: length)
-                let name = String(s[index ..< endIndex])
+                let name = String(s[index..<endIndex])
                 result.append(name)
                 index = endIndex
             }
@@ -1856,7 +2005,7 @@ final class AlertChecker: @unchecked Sendable {
     func updateConfig(_ newConfig: AlertConfig) {
         lock.lock()
         defer { lock.unlock() }
-        self.config = newConfig
+        config = newConfig
     }
 
     func checkMetrics(_ metrics: PerformanceMetrics) {
@@ -2009,12 +2158,11 @@ final class AlertChecker: @unchecked Sendable {
             formattedThreshold = String(format: "%.0f", rule.threshold)
         }
 
-        let conditionText: String
-        switch rule.condition {
+        let conditionText = switch rule.condition {
         case .greaterThan, .greaterThanOrEqual:
-            conditionText = "超过"
+            "超过"
         case .lessThan, .lessThanOrEqual:
-            conditionText = "低于"
+            "低于"
         }
 
         return "\(metricName)\(conditionText)阈值：当前 \(formattedValue)\(unit)，阈值 \(formattedThreshold)\(unit)"
@@ -2096,11 +2244,11 @@ final class DiskIOMonitor: @unchecked Sendable {
     private var lastTimestamp: CFAbsoluteTime = 0
 
     #if os(iOS) || os(tvOS) || os(watchOS)
-    /// iOS: 缓存应用目录大小用于估算写入
-    private var lastDirectorySize: UInt64 = 0
-    /// iOS: 追踪文件读取操作（通过 hook 或估算）
-    private var estimatedReadOps: UInt64 = 0
-    private var estimatedWriteOps: UInt64 = 0
+        /// iOS: 缓存应用目录大小用于估算写入
+        private var lastDirectorySize: UInt64 = 0
+        /// iOS: 追踪文件读取操作（通过 hook 或估算）
+        private var estimatedReadOps: UInt64 = 0
+        private var estimatedWriteOps: UInt64 = 0
     #endif
 
     init() {
@@ -2143,132 +2291,134 @@ final class DiskIOMonitor: @unchecked Sendable {
 
     private func getDiskIOStats() -> (readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64) {
         #if os(macOS)
-        return getMacOSDiskIOStats()
+            return getMacOSDiskIOStats()
         #else
-        return getiOSDiskIOStats()
+            return getiOSDiskIOStats()
         #endif
     }
 
     #if os(macOS)
-    /// macOS: 使用 proc_pid_rusage 获取精确的磁盘 I/O 统计
-    private func getMacOSDiskIOStats() -> (readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64) {
-        var rusage = rusage_info_v4()
-        let result = withUnsafeMutablePointer(to: &rusage) {
-            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0)
+        /// macOS: 使用 proc_pid_rusage 获取精确的磁盘 I/O 统计
+        private func getMacOSDiskIOStats()
+            -> (readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64) {
+            var rusage = rusage_info_v4()
+            let result = withUnsafeMutablePointer(to: &rusage) {
+                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                    proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0)
+                }
             }
-        }
 
-        if result == 0 {
+            if result == 0 {
+                return (
+                    readBytes: rusage.ri_diskio_bytesread,
+                    writeBytes: rusage.ri_diskio_byteswritten,
+                    readOps: 0,
+                    writeOps: 0
+                )
+            }
+            return (0, 0, 0, 0)
+        }
+    #else
+        /// iOS: 通过监控应用目录大小变化和资源使用估算磁盘 I/O
+        private func getiOSDiskIOStats() -> (readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64) {
+            // 获取应用目录总大小作为累计写入量的估算
+            let currentDirectorySize = calculateAppDirectorySize()
+
+            // 写入字节估算：目录大小增长量
+            let writeEstimate = currentDirectorySize
+
+            // 读取估算：基于内存映射文件和系统资源使用
+            // 使用 getrusage 获取页面错误数作为读取操作的间接指标
+            var usage = rusage()
+            let readEstimate: UInt64
+            let readOps: UInt64
+            let writeOps: UInt64
+
+            if getrusage(RUSAGE_SELF, &usage) == 0 {
+                // 页面错误（major faults）通常意味着从磁盘读取
+                // 每次 major fault 约等于一个页面（通常 16KB）
+                let majorFaults = UInt64(max(0, usage.ru_majflt))
+                let pageSize: UInt64 = 16384 // iOS 通常使用 16KB 页面
+
+                readEstimate = majorFaults * pageSize
+                readOps = majorFaults
+                writeOps = estimatedWriteOps
+            } else {
+                readEstimate = 0
+                readOps = 0
+                writeOps = 0
+            }
+
+            // 检测目录大小变化来估算写入操作次数
+            if currentDirectorySize > lastDirectorySize {
+                estimatedWriteOps += 1
+            }
+            lastDirectorySize = currentDirectorySize
+
             return (
-                readBytes: rusage.ri_diskio_bytesread,
-                writeBytes: rusage.ri_diskio_byteswritten,
-                readOps: 0,
-                writeOps: 0
+                readBytes: readEstimate,
+                writeBytes: writeEstimate,
+                readOps: readOps,
+                writeOps: estimatedWriteOps
             )
         }
-        return (0, 0, 0, 0)
-    }
-    #else
-    /// iOS: 通过监控应用目录大小变化和资源使用估算磁盘 I/O
-    private func getiOSDiskIOStats() -> (readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64) {
-        // 获取应用目录总大小作为累计写入量的估算
-        let currentDirectorySize = calculateAppDirectorySize()
 
-        // 写入字节估算：目录大小增长量
-        let writeEstimate = currentDirectorySize
+        /// 计算应用目录总大小（用于估算写入量）
+        private func calculateAppDirectorySize() -> UInt64 {
+            let fileManager = FileManager.default
+            var totalSize: UInt64 = 0
 
-        // 读取估算：基于内存映射文件和系统资源使用
-        // 使用 getrusage 获取页面错误数作为读取操作的间接指标
-        var usage = rusage()
-        let readEstimate: UInt64
-        let readOps: UInt64
-        let writeOps: UInt64
+            // 主要监控的目录
+            let directories: [FileManager.SearchPathDirectory] = [
+                .documentDirectory,
+                .cachesDirectory,
+                .libraryDirectory,
+            ]
 
-        if getrusage(RUSAGE_SELF, &usage) == 0 {
-            // 页面错误（major faults）通常意味着从磁盘读取
-            // 每次 major fault 约等于一个页面（通常 16KB）
-            let majorFaults = UInt64(max(0, usage.ru_majflt))
-            let pageSize: UInt64 = 16384 // iOS 通常使用 16KB 页面
-
-            readEstimate = majorFaults * pageSize
-            readOps = majorFaults
-            writeOps = estimatedWriteOps
-        } else {
-            readEstimate = 0
-            readOps = 0
-            writeOps = 0
-        }
-
-        // 检测目录大小变化来估算写入操作次数
-        if currentDirectorySize > lastDirectorySize {
-            estimatedWriteOps += 1
-        }
-        lastDirectorySize = currentDirectorySize
-
-        return (
-            readBytes: readEstimate,
-            writeBytes: writeEstimate,
-            readOps: readOps,
-            writeOps: estimatedWriteOps
-        )
-    }
-
-    /// 计算应用目录总大小（用于估算写入量）
-    private func calculateAppDirectorySize() -> UInt64 {
-        let fileManager = FileManager.default
-        var totalSize: UInt64 = 0
-
-        // 主要监控的目录
-        let directories: [FileManager.SearchPathDirectory] = [
-            .documentDirectory,
-            .cachesDirectory,
-            .libraryDirectory
-        ]
-
-        for directory in directories {
-            guard let path = fileManager.urls(for: directory, in: .userDomainMask).first else {
-                continue
-            }
-
-            totalSize += directorySize(at: path)
-        }
-
-        // 添加临时目录
-        let tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
-        totalSize += directorySize(at: tempPath)
-
-        return totalSize
-    }
-
-    /// 递归计算目录大小
-    private func directorySize(at url: URL) -> UInt64 {
-        let fileManager = FileManager.default
-        var size: UInt64 = 0
-
-        guard let enumerator = fileManager.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles],
-            errorHandler: nil
-        ) else {
-            return 0
-        }
-
-        for case let fileURL as URL in enumerator {
-            do {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-                if resourceValues.isRegularFile == true {
-                    size += UInt64(resourceValues.fileSize ?? 0)
+            for directory in directories {
+                guard let path = fileManager.urls(for: directory, in: .userDomainMask).first else {
+                    continue
                 }
-            } catch {
-                // 忽略无法访问的文件
-                continue
+
+                totalSize += directorySize(at: path)
             }
+
+            // 添加临时目录
+            let tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
+            totalSize += directorySize(at: tempPath)
+
+            return totalSize
         }
 
-        return size
-    }
+        /// 递归计算目录大小
+        private func directorySize(at url: URL) -> UInt64 {
+            let fileManager = FileManager.default
+            var size: UInt64 = 0
+
+            guard
+                let enumerator = fileManager.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                    options: [.skipsHiddenFiles],
+                    errorHandler: nil
+                ) else {
+                return 0
+            }
+
+            for case let fileURL as URL in enumerator {
+                do {
+                    let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                    if resourceValues.isRegularFile == true {
+                        size += UInt64(resourceValues.fileSize ?? 0)
+                    }
+                } catch {
+                    // 忽略无法访问的文件
+                    continue
+                }
+            }
+
+            return size
+        }
     #endif
 }
 
@@ -2298,7 +2448,7 @@ final class SmartSampler: @unchecked Sendable {
 
     init(baseInterval: TimeInterval) {
         self.baseInterval = baseInterval
-        self._currentInterval = baseInterval
+        _currentInterval = baseInterval
     }
 
     func updateWithMetrics(_ metrics: PerformanceMetrics) {
@@ -2335,7 +2485,7 @@ final class SmartSampler: @unchecked Sendable {
             newInterval = minInterval
         } else if avgCPU > 50 || avgMemory > 50 || cpuVariance > 50 || memoryVariance > 50 {
             newInterval = baseInterval * 0.5
-        } else if avgCPU < 20 && avgMemory < 30 && cpuVariance < 10 && memoryVariance < 10 {
+        } else if avgCPU < 20, avgMemory < 30, cpuVariance < 10, memoryVariance < 10 {
             // 低负载且稳定时降低采样频率
             newInterval = min(baseInterval * 2, maxInterval)
         }

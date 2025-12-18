@@ -11,11 +11,8 @@ import Foundation
 public final class DebugProbe {
     // MARK: - Singleton
 
-    public static let shared: DebugProbe = {
-        // 确保在 DebugProbe 首次访问时记录启动时间
-        AppLaunchRecorder.ensureRecorded()
-        return DebugProbe()
-    }()
+    public static let shared: DebugProbe = // C 语言 constructor 已自动记录启动时间，无需手动调用
+        .init()
 
     // MARK: - Versions
 

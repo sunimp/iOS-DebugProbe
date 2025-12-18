@@ -513,7 +513,13 @@ public struct MemoryMetricsData: Codable, Sendable {
     public let memoryPressure: String
     public let footprintRatio: Double
 
-    public init(usedMemory: UInt64, peakMemory: UInt64, freeMemory: UInt64, memoryPressure: String, footprintRatio: Double) {
+    public init(
+        usedMemory: UInt64,
+        peakMemory: UInt64,
+        freeMemory: UInt64,
+        memoryPressure: String,
+        footprintRatio: Double
+    ) {
         self.usedMemory = usedMemory
         self.peakMemory = peakMemory
         self.freeMemory = freeMemory
@@ -545,7 +551,13 @@ public struct JankEventData: Codable, Sendable {
     public let droppedFrames: Int
     public let stackTrace: String?
 
-    public init(id: String = UUID().uuidString, timestamp: Date = Date(), duration: Double, droppedFrames: Int, stackTrace: String? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        timestamp: Date = Date(),
+        duration: Double,
+        droppedFrames: Int,
+        stackTrace: String? = nil
+    ) {
         self.id = id
         self.timestamp = timestamp
         self.duration = duration
@@ -591,6 +603,7 @@ public struct AlertData: Codable, Sendable {
         self.resolvedAt = resolvedAt
     }
 }
+
 /// 网络流量指标数据（用于事件传输）
 public struct NetworkTrafficMetricsData: Codable, Sendable {
     public let bytesReceived: UInt64
@@ -615,7 +628,14 @@ public struct DiskIOMetricsData: Codable, Sendable {
     public let readRate: Double
     public let writeRate: Double
 
-    public init(readBytes: UInt64, writeBytes: UInt64, readOps: UInt64, writeOps: UInt64, readRate: Double, writeRate: Double) {
+    public init(
+        readBytes: UInt64,
+        writeBytes: UInt64,
+        readOps: UInt64,
+        writeOps: UInt64,
+        readRate: Double,
+        writeRate: Double
+    ) {
         self.readBytes = readBytes
         self.writeBytes = writeBytes
         self.readOps = readOps
@@ -638,18 +658,95 @@ public struct AppLaunchMetricsData: Codable, Sendable {
     /// 记录时间戳
     public let timestamp: Date
 
+    // MARK: - PreMain 细分数据（可选，新增字段）
+
+    /// PreMain 细分详情
+    public let preMainDetails: PreMainDetailsData?
+
     public init(
         totalTime: Double,
         preMainTime: Double?,
         mainToLaunchTime: Double?,
         launchToFirstFrameTime: Double?,
-        timestamp: Date
+        timestamp: Date,
+        preMainDetails: PreMainDetailsData? = nil
     ) {
         self.totalTime = totalTime
         self.preMainTime = preMainTime
         self.mainToLaunchTime = mainToLaunchTime
         self.launchToFirstFrameTime = launchToFirstFrameTime
         self.timestamp = timestamp
+        self.preMainDetails = preMainDetails
+    }
+}
+
+/// PreMain 细分详情数据（用于事件传输）
+public struct PreMainDetailsData: Codable, Sendable {
+    /// dylib 加载耗时（毫秒）
+    public let dylibLoadingMs: Double?
+    /// 静态初始化器耗时（毫秒）
+    public let staticInitializerMs: Double?
+    /// dyld 结束到 main 的耗时（毫秒）
+    public let postDyldToMainMs: Double?
+    /// ObjC +load 耗时（毫秒）
+    public let objcLoadMs: Double?
+    /// 估算的内核启动到 constructor 的时间（毫秒）
+    public let estimatedKernelToConstructorMs: Double?
+
+    /// dylib 统计
+    public let dylibStats: DylibStatsData?
+
+    /// 加载最慢的 dylib 列表
+    public let slowestDylibs: [DylibLoadInfoData]?
+
+    public init(
+        dylibLoadingMs: Double? = nil,
+        staticInitializerMs: Double? = nil,
+        postDyldToMainMs: Double? = nil,
+        objcLoadMs: Double? = nil,
+        estimatedKernelToConstructorMs: Double? = nil,
+        dylibStats: DylibStatsData? = nil,
+        slowestDylibs: [DylibLoadInfoData]? = nil
+    ) {
+        self.dylibLoadingMs = dylibLoadingMs
+        self.staticInitializerMs = staticInitializerMs
+        self.postDyldToMainMs = postDyldToMainMs
+        self.objcLoadMs = objcLoadMs
+        self.estimatedKernelToConstructorMs = estimatedKernelToConstructorMs
+        self.dylibStats = dylibStats
+        self.slowestDylibs = slowestDylibs
+    }
+}
+
+/// dylib 统计数据（用于事件传输）
+public struct DylibStatsData: Codable, Sendable {
+    /// 总 dylib 数量
+    public let totalCount: Int
+    /// 系统库数量
+    public let systemCount: Int
+    /// 用户库数量
+    public let userCount: Int
+
+    public init(totalCount: Int, systemCount: Int, userCount: Int) {
+        self.totalCount = totalCount
+        self.systemCount = systemCount
+        self.userCount = userCount
+    }
+}
+
+/// dylib 加载信息数据（用于事件传输）
+public struct DylibLoadInfoData: Codable, Sendable {
+    /// dylib 名称
+    public let name: String
+    /// 加载耗时（毫秒）
+    public let loadDurationMs: Double
+    /// 是否为系统库
+    public let isSystemLibrary: Bool
+
+    public init(name: String, loadDurationMs: Double, isSystemLibrary: Bool) {
+        self.name = name
+        self.loadDurationMs = loadDurationMs
+        self.isSystemLibrary = isSystemLibrary
     }
 }
 
@@ -748,26 +845,26 @@ public struct PageTimingData: Codable, Sendable {
 
     /// 从 PageTimingEvent 创建
     public init(from event: PageTimingEvent) {
-        self.eventId = event.eventId
-        self.visitId = event.visitId
-        self.pageId = event.pageId
-        self.pageName = event.pageName
-        self.route = event.route
-        self.startAt = event.startAt
-        self.firstLayoutAt = event.firstLayoutAt
-        self.appearAt = event.appearAt
-        self.endAt = event.endAt
-        self.loadDuration = event.loadDuration
-        self.appearDuration = event.appearDuration
-        self.totalDuration = event.totalDuration
-        self.markers = event.markers.map { PageTimingMarkerData(from: $0) }
-        self.appVersion = event.appVersion
-        self.appBuild = event.appBuild
-        self.osVersion = event.osVersion
-        self.deviceModel = event.deviceModel
-        self.isColdStart = event.isColdStart
-        self.isPush = event.isPush
-        self.parentPageId = event.parentPageId
+        eventId = event.eventId
+        visitId = event.visitId
+        pageId = event.pageId
+        pageName = event.pageName
+        route = event.route
+        startAt = event.startAt
+        firstLayoutAt = event.firstLayoutAt
+        appearAt = event.appearAt
+        endAt = event.endAt
+        loadDuration = event.loadDuration
+        appearDuration = event.appearDuration
+        totalDuration = event.totalDuration
+        markers = event.markers.map { PageTimingMarkerData(from: $0) }
+        appVersion = event.appVersion
+        appBuild = event.appBuild
+        osVersion = event.osVersion
+        deviceModel = event.deviceModel
+        isColdStart = event.isColdStart
+        isPush = event.isPush
+        parentPageId = event.parentPageId
     }
 }
 
@@ -788,8 +885,8 @@ public struct PageTimingMarkerData: Codable, Sendable {
 
     /// 从 PageTimingMarker 创建
     public init(from marker: PageTimingMarker) {
-        self.name = marker.name
-        self.timestamp = marker.timestamp
-        self.deltaMs = marker.deltaMs
+        name = marker.name
+        timestamp = marker.timestamp
+        deltaMs = marker.deltaMs
     }
 }
