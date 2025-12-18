@@ -206,6 +206,9 @@ public final class CaptureURLProtocol: URLProtocol {
     /// 响应是否已经发送给客户端
     private var responseAlreadySent: Bool = false
 
+    /// 保存原始请求体（因为 URLProtocol.request.httpBody 在某些情况下可能为 nil）
+    private var originalHttpBody: Data?
+
     // MARK: - URLProtocol Override
 
     override public class func canInit(with request: URLRequest) -> Bool {
@@ -245,6 +248,9 @@ public final class CaptureURLProtocol: URLProtocol {
         startTime = Date()
         requestId = UUID().uuidString
         traceId = request.value(forHTTPHeaderField: "X-Trace-Id")
+
+        // 保存原始请求体（httpBody 在 URLProtocol 处理期间可能会被清空）
+        originalHttpBody = request.httpBody ?? readBodyStream(from: request)
 
         // 1. 处理 Mock 规则 (通过 EventCallbacks 委托给 MockPlugin)
         var modifiedRequest = request
@@ -428,13 +434,16 @@ public final class CaptureURLProtocol: URLProtocol {
             }
         }
 
+        // 使用保存的原始请求体（优先）或当前请求的 httpBody
+        let requestBodyData = originalHttpBody ?? request.httpBody
+
         let httpRequest = HTTPEvent.Request(
             id: requestId,
             method: request.httpMethod ?? "GET",
             url: request.url?.absoluteString ?? "",
             queryItems: queryItems,
             headers: request.allHTTPHeaderFields ?? [:],
-            body: truncateBody(request.httpBody),
+            body: truncateBody(requestBodyData),
             startTime: startTime,
             traceId: traceId
         )
@@ -574,6 +583,31 @@ public final class CaptureURLProtocol: URLProtocol {
             return data.prefix(maxSize)
         }
         return data
+    }
+
+    /// 从 httpBodyStream 读取数据
+    /// 当 httpBody 为 nil 但 httpBodyStream 存在时使用
+    private func readBodyStream(from request: URLRequest) -> Data? {
+        guard let stream = request.httpBodyStream else { return nil }
+
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+
+        stream.open()
+        defer { stream.close() }
+
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(buffer, maxLength: bufferSize)
+            if bytesRead > 0 {
+                data.append(buffer, count: bytesRead)
+            } else {
+                break
+            }
+        }
+
+        return data.isEmpty ? nil : data
     }
 }
 
