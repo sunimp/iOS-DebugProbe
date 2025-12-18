@@ -86,6 +86,9 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
     /// 是否在 Inspector 中可见
     public let visibleInInspector: Bool
 
+    /// 是否属于当前活跃用户（多账户场景下用于区分）
+    public var isActive: Bool
+
     /// 初始化
     public init(
         id: String,
@@ -93,7 +96,8 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
         kind: Kind,
         location: Location,
         isSensitive: Bool = false,
-        visibleInInspector: Bool = true
+        visibleInInspector: Bool = true,
+        isActive: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -101,5 +105,6 @@ public struct DatabaseDescriptor: Codable, Identifiable, Hashable, Sendable {
         self.location = location
         self.isSensitive = isSensitive
         self.visibleInInspector = visibleInInspector
+        self.isActive = isActive
     }
 }

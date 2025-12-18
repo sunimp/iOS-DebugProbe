@@ -113,6 +113,94 @@ public final class DatabaseRegistry: @unchecked Sendable {
         databases.removeAll()
         DebugLog.info("[DatabaseRegistry] Cleared all registrations")
     }
+
+    // MARK: - Active State Management (多账户场景)
+
+    /// 设置指定数据库为活跃状态
+    /// - Parameter dbIds: 活跃数据库 ID 列表
+    /// - Note: 未在列表中的已注册数据库将被标记为非活跃
+    public func setActive(dbIds: Set<String>) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for (id, var registered) in databases {
+            var descriptor = registered.descriptor
+            descriptor.isActive = dbIds.contains(id)
+            registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+            databases[id] = registered
+        }
+
+        DebugLog.info("[DatabaseRegistry] Set active databases: \(dbIds.joined(separator: ", "))")
+    }
+
+    /// 设置单个数据库的活跃状态
+    /// - Parameters:
+    ///   - dbId: 数据库 ID
+    ///   - isActive: 是否活跃
+    public func setActive(dbId: String, isActive: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard var registered = databases[dbId] else { return }
+        var descriptor = registered.descriptor
+        descriptor.isActive = isActive
+        registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+        databases[dbId] = registered
+
+        DebugLog.info("[DatabaseRegistry] Set database \(dbId) active: \(isActive)")
+    }
+
+    /// 将所有数据库标记为活跃
+    public func setAllActive() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for (id, var registered) in databases {
+            var descriptor = registered.descriptor
+            descriptor.isActive = true
+            registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+            databases[id] = registered
+        }
+
+        DebugLog.info("[DatabaseRegistry] Set all databases active")
+    }
+
+    /// 将所有数据库标记为非活跃
+    public func clearActive() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for (id, var registered) in databases {
+            var descriptor = registered.descriptor
+            descriptor.isActive = false
+            registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+            databases[id] = registered
+        }
+
+        DebugLog.info("[DatabaseRegistry] Cleared all active databases")
+    }
+
+    /// 设置包含指定路径前缀的数据库为活跃
+    /// - Parameter pathPrefix: 路径前缀（如用户目录）
+    /// - Note: 路径匹配使用 URL.path 进行前缀比较
+    public func setActiveByPath(prefix pathPrefix: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var activeIds: [String] = []
+        for (id, var registered) in databases {
+            var descriptor = registered.descriptor
+            let isMatch = registered.url.path.hasPrefix(pathPrefix)
+            descriptor.isActive = isMatch
+            registered = RegisteredDatabase(descriptor: descriptor, url: registered.url)
+            databases[id] = registered
+            if isMatch {
+                activeIds.append(id)
+            }
+        }
+
+        DebugLog.info("[DatabaseRegistry] Set active by path prefix '\(pathPrefix)': \(activeIds.joined(separator: ", "))")
+    }
 }
 
 // MARK: - Simple Registration API (宿主 App 推荐使用)
